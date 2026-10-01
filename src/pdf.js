@@ -20,6 +20,10 @@ function serial(settings, serialNo) {
   return `${prefix}/2026/${String(serialNo || 0).padStart(3, '0')}`;
 }
 
+function normalizeAjkLabel(value) {
+  return String(value || '').replace(/^AJK\s+\d+\b/i, 'AJK').replace(/\s+/g, ' ').trim();
+}
+
 function fitText(font, text, maxWidth, preferred = 12, min = 8.5) {
   let size = preferred;
   const value = String(text || '');
@@ -54,7 +58,7 @@ async function stampStudent(pdfDoc, templateDoc, templatePageIndex, student, set
   const regular = fonts.regular;
 
   // Serial number: exact box from the master template.
-  drawText(page, regular, serial(settings, student.serial_no), 503, 43.3, { size: 10.2, maxWidth: 69, minSize: 7.5 });
+  drawText(page, bold, serial(settings, student.serial_no), 503, 43.3, { size: 10.2, maxWidth: 69, minSize: 7.5 });
 
   // Main fields (measured from the 2025 AutoCrat output).
   drawText(page, bold, student.full_name, VALUE_X, 255.74, { maxWidth: 365, minSize: 9 });
@@ -66,9 +70,9 @@ async function stampStudent(pdfDoc, templateDoc, templatePageIndex, student, set
   drawText(page, bold, 'BAIK', VALUE_X, 421.33, { maxWidth: 100 });
 
   drawText(page, bold, student.leadership, TABLE_VALUE_X, 482.52, { maxWidth: 371, minSize: 8 });
-  drawText(page, bold, student.koku?.club, TABLE_VALUE_X, 507.57, { maxWidth: 371, minSize: 8 });
-  drawText(page, bold, student.koku?.sport, TABLE_VALUE_X, 532.62, { maxWidth: 371, minSize: 8 });
-  drawText(page, bold, student.koku?.uniform, TABLE_VALUE_X, 557.67, { maxWidth: 371, minSize: 8 });
+  drawText(page, bold, normalizeAjkLabel(student.koku?.club), TABLE_VALUE_X, 507.57, { maxWidth: 371, minSize: 8 });
+  drawText(page, bold, normalizeAjkLabel(student.koku?.sport), TABLE_VALUE_X, 532.62, { maxWidth: 371, minSize: 8 });
+  drawText(page, bold, normalizeAjkLabel(student.koku?.uniform), TABLE_VALUE_X, 557.67, { maxWidth: 371, minSize: 8 });
 
   // Signature: transparent cleaned image, deliberately wide/short so it fits the space above the name.
   page.drawImage(signatureImage, {

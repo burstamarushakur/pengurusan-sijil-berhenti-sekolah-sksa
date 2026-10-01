@@ -7,7 +7,6 @@ import {
   Eye,
   FileText,
   Loader2,
-  LockKeyhole,
   LogOut,
   RefreshCw,
   Save,
@@ -21,6 +20,27 @@ import { downloadBytes, makeClassPdf, makeStudentPdf, previewBytes } from './pdf
 import './styles.css';
 
 const YEAR = 2026;
+
+const LEADERSHIP_OPTIONS = [
+  ['KETUA KELAS', 'Ketua Kelas'],
+  ['KETUA PENGAWAS SEKOLAH', 'Ketua Pengawas Sekolah'],
+  ['KETUA PENGAWAS ICT', 'Ketua Pengawas ICT'],
+  ['KETUA PENGAWAS PUSAT SUMBER', 'Ketua Pengawas Pusat Sumber'],
+  ['PENGAWAS SEKOLAH', 'Pengawas Sekolah'],
+  ['PENGAWAS PUSAT SUMBER', 'Pengawas Pusat Sumber'],
+  ['PENGAWAS SPBT', 'Pengawas SPBT'],
+  ['PENOLONG KETUA KELAS', 'Penolong Ketua Kelas'],
+  ['PENOLONG KETUA PENGAWAS SEKOLAH', 'Penolong Ketua Pengawas Sekolah'],
+  ['PENOLONG KETUA PENGAWAS ICT', 'Penolong Ketua Pengawas ICT'],
+  ['PENGAWAS ICT', 'Pengawas ICT'],
+  ['KETUA PENGAWAS SPBT', 'Ketua Pengawas SPBT'],
+  ['PENOLONG KETUA PENGAWAS SPBT', 'Penolong Ketua Pengawas SPBT'],
+  ['PENOLONG KETUA PENGAWAS PUSAT SUMBER', 'Penolong Ketua Pengawas Pusat Sumber'],
+];
+
+function normalizeAjkLabel(value) {
+  return String(value || '').replace(/^AJK\s+\d+\b/i, 'AJK').replace(/\s+/g, ' ').trim();
+}
 
 function sanitizeFilename(name) {
   return String(name || 'SIJIL')
@@ -41,7 +61,7 @@ function Login({ onLogin, busy, error }) {
     <main className="login-shell">
       <section className="login-card">
         <div className="crest">JBA5095</div>
-        <div className="login-icon"><LockKeyhole size={30} /></div>
+        <div className="login-logo-wrap"><img className="login-logo" src="https://i.postimg.cc/3RF9M05N/Logo-SKSA.png" alt="Logo SK Sungai Abong" /></div>
         <h1>Sistem Sijil Tamat Persekolahan</h1>
         <p>SK Sungai Abong · Tahun 6 · {YEAR}</p>
         <form onSubmit={(e) => { e.preventDefault(); onLogin(ic); }}>
@@ -403,7 +423,7 @@ function App() {
                         <Field label="Tarikh Masuk Sekolah" value={displayDate(selectedStudent.school_entry_date)} readOnly />
                         <Field label="Tarikh Keluar Sekolah" value={displayDate(settings?.leaving_date || '2026-12-31')} readOnly />
                         <Field label="Kelakuan" value="BAIK" readOnly />
-                        <Field label="Kepimpinan" value={form.leadership} onChange={(v) => setForm((f) => ({ ...f, leadership: v.toUpperCase() }))} placeholder="Contoh: PENGAWAS ICT / KETUA KELAS / TIADA" wide />
+                        <SelectField label="Kepimpinan" value={form.leadership} onChange={(v) => setForm((f) => ({ ...f, leadership: v }))} options={LEADERSHIP_OPTIONS} wide />
                       </div>
 
                       <div className="koku-card">
@@ -462,11 +482,25 @@ function Field({ label, value, onChange, readOnly, placeholder, wide }) {
   );
 }
 
+function SelectField({ label, value, onChange, options, wide }) {
+  return (
+    <label className={`field ${wide ? 'wide' : ''}`}>
+      <span>{label}</span>
+      <select value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Pilih jawatan...</option>
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>{optionLabel}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function KokuRow({ label, value }) {
   return (
     <div className="koku-row">
       <span>{label}</span>
-      <strong className={!value ? 'missing' : ''}>{value || 'DATA BELUM ADA'}</strong>
+      <strong className={!value ? 'missing' : ''}>{value ? normalizeAjkLabel(value) : 'DATA BELUM ADA'}</strong>
     </div>
   );
 }
