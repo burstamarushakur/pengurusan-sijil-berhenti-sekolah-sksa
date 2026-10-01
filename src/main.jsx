@@ -63,7 +63,7 @@ function Login({ onLogin, busy, error }) {
         <div className="crest">JBA5095</div>
         <div className="login-logo-wrap"><img className="login-logo" src="https://i.postimg.cc/3RF9M05N/Logo-SKSA.png" alt="Logo SK Sungai Abong" /></div>
         <h1>Sistem Sijil Tamat Persekolahan</h1>
-        <p>SK Sungai Abong · Tahun 6 · {YEAR}</p>
+        <p>SK Sungai Abong · 2026</p>
         <form onSubmit={(e) => { e.preventDefault(); onLogin(ic); }}>
           <label>No. Kad Pengenalan</label>
           <input
@@ -106,6 +106,7 @@ function App() {
   const [loginError, setLoginError] = useState('');
   const [settings, setSettings] = useState(null);
   const [classes, setClasses] = useState([]);
+  const [ppkiSummary, setPpkiSummary] = useState({ total: 0, selected: 0, completed: 0, pending: 0 });
   const [selectedClass, setSelectedClass] = useState(null);
   const [students, setStudents] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -115,16 +116,31 @@ function App() {
   const [pdfBusy, setPdfBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [form, setForm] = useState({ birth_certificate_no: '', leadership: '' });
+  const [ppkiSelecting, setPpkiSelecting] = useState(false);
+  const [ppkiCandidates, setPpkiCandidates] = useState([]);
+  const [ppkiSelectedIds, setPpkiSelectedIds] = useState(() => new Set());
+  const [ppkiSearch, setPpkiSearch] = useState('');
 
+  const isPPKI = selectedClass?.type === 'PPKI';
   const selectedStudent = students.find((s) => s.student_id === selectedId) || null;
 
   const filteredStudents = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return students;
     return students.filter((s) =>
-      s.full_name.toLowerCase().includes(q) || String(s.serial_no || '').includes(q)
+      s.full_name.toLowerCase().includes(q) ||
+      String(s.serial_no || '').includes(q) ||
+      String(s.class_name || '').toLowerCase().includes(q)
     );
   }, [students, search]);
+
+  const filteredPpkiCandidates = useMemo(() => {
+    const q = ppkiSearch.trim().toLowerCase();
+    if (!q) return ppkiCandidates;
+    return ppkiCandidates.filter((s) =>
+      s.full_name.toLowerCase().includes(q) || String(s.class_name || '').toLowerCase().includes(q)
+    );
+  }, [ppkiCandidates, ppkiSearch]);
 
   function clearSession() {
     sessionStorage.removeItem('sijil-token');
@@ -198,6 +214,7 @@ function App() {
       ]);
       setSettings(configRes.settings);
       setClasses(classRes.classes || []);
+      setPpkiSummary(classRes.ppki || { total: 0, selected: 0, completed: 0, pending: 0 });
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -206,10 +223,11 @@ function App() {
   }
 
   async function openClass(cls) {
-    setSelectedClass(cls);
+    setSelectedClass({ ...cls, type: 'MAINSTREAM' });
     setStudents([]);
     setSelectedId(null);
     setSearch('');
+    setPpkiSelecting(false);
     setLoading(true);
     setMessage('');
     try {
@@ -220,6 +238,72 @@ function App() {
       setMessage(err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function openPPKISelection() {
+    setSelectedClass({ id: 'PPKI', name: 'PENDIDIKAN KHAS (PPKI)', type: 'PPKI' });
+    setPpkiSelecting(true);
+    setStudents([]);
+    setSelectedId(null);
+    setPpkiSearch('');
+    setLoading(true);
+    setMessage('');
+    try {
+      const result = await api(token, 'getPPKISelection');
+      const rows = result.students || [];
+      setPpkiCandidates(rows);
+      setPpkiSelectedIds(new Set(rows.filter((s) => s.selected).map((s) => s.student_id)));
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openPPKIWorkspace() {
+    setSelectedClass({ id: 'PPKI', name: 'PENDIDIKAN KHAS (PPKI)', type: 'PPKI' });
+    setPpkiSelecting(false);
+    setStudents([]);
+    setSelectedId(null);
+    setSearch('');
+    setLoading(true);
+    setMessage('');
+    try {
+      const result = await api(token, 'getSelectedPPKIStudents');
+      setStudents(result.students || []);
+      if (result.students?.length) setSelectedId(result.students[0].student_id);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function togglePpkiStudent(id) {
+    setPpkiSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function savePPKISelection() {
+    setSaving(true);
+    setMessage('');
+    try {
+      const result = await api(token, 'savePPKISelection', { studentIds: [...ppkiSelectedIds] });
+      setMessage(`Pilihan PPKI disimpan oleh ${result.savedBy || user?.full_name || 'pengguna'}. ${result.selected || 0} murid dipilih.`);
+      setStudents(result.students || []);
+      setSelectedId(result.students?.[0]?.student_id || null);
+      setPpkiSelecting(false);
+      const classRes = await api(token, 'getClasses');
+      setClasses(classRes.classes || []);
+      setPpkiSummary(classRes.ppki || { total: 0, selected: 0, completed: 0, pending: 0 });
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -239,6 +323,7 @@ function App() {
       setMessage(`Maklumat berjaya disimpan oleh ${result.savedBy || user?.full_name || 'pengguna'}.`);
       const classRes = await api(token, 'getClasses');
       setClasses(classRes.classes || []);
+      setPpkiSummary(classRes.ppki || { total: 0, selected: 0, completed: 0, pending: 0 });
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -287,15 +372,20 @@ function App() {
     if (!selectedClass) return;
     const pending = students.filter((s) => s.status !== 'SELESAI');
     if (pending.length) {
-      setMessage(`Belum boleh jana PDF kelas. ${pending.length} murid masih belum lengkap.`);
+      setMessage(`Belum boleh jana PDF ${isPPKI ? 'PPKI' : 'kelas'}. ${pending.length} murid masih belum lengkap.`);
+      return;
+    }
+    if (!students.length) {
+      setMessage('Tiada murid dipilih untuk dijana.');
       return;
     }
     setPdfBusy(true);
     try {
       const bytes = await makeClassPdf(students, settings);
-      downloadBytes(bytes, `${sanitizeFilename(selectedClass.name)}_SIJIL_TAMAT_${YEAR}.pdf`);
+      const label = isPPKI ? 'PPKI' : selectedClass.name;
+      downloadBytes(bytes, `${sanitizeFilename(label)}_SIJIL_TAMAT_${YEAR}.pdf`);
     } catch (err) {
-      setMessage(`Gagal jana PDF kelas: ${err.message}`);
+      setMessage(`Gagal jana PDF: ${err.message}`);
     } finally {
       setPdfBusy(false);
     }
@@ -312,8 +402,19 @@ function App() {
     setClasses([]);
     setSelectedClass(null);
     setStudents([]);
+    setPpkiCandidates([]);
   }
 
+  function backDashboard() {
+    setSelectedClass(null);
+    setStudents([]);
+    setSelectedId(null);
+    setPpkiSelecting(false);
+    setPpkiCandidates([]);
+    setSearch('');
+    setPpkiSearch('');
+    loadDashboard();
+  }
 
   if (!authorized) return <Login onLogin={authenticate} busy={loginBusy} error={loginError} />;
 
@@ -323,7 +424,7 @@ function App() {
         <div>
           <div className="eyebrow">SEKOLAH KEBANGSAAN SUNGAI ABONG</div>
           <h1>Sijil Tamat Persekolahan Sekolah Rendah</h1>
-          <p>Tahun 6 · Sesi {YEAR}</p>
+          <p>Arus Perdana & Pendidikan Khas · Sesi {YEAR}</p>
         </div>
         <div className="top-actions">
           <div className="user-chip"><span>Log masuk</span><strong>{user?.full_name || '-'}</strong></div>
@@ -339,8 +440,8 @@ function App() {
           <section>
             <div className="section-heading">
               <div>
-                <h2>Dashboard Tahun 6</h2>
-                <p>Pilih kelas untuk melengkapkan sijil murid.</p>
+                <h2>Dashboard Sijil Tamat Persekolahan</h2>
+                <p>Pilih kelas Tahun 6 atau urus murid PPKI yang akan tamat.</p>
               </div>
               <div className="date-chip">Tarikh keluar: <strong>{displayDate(settings?.leaving_date || '2026-12-31')}</strong></div>
             </div>
@@ -363,26 +464,85 @@ function App() {
                     </button>
                   );
                 })}
+
+                <button className="class-card ppki-card" onClick={openPPKISelection}>
+                  <div className="class-icon"><Users size={24} /></div>
+                  <div className="class-title">PENDIDIKAN KHAS (PPKI)</div>
+                  <div className="teacher">Pilih sendiri murid PPKI yang akan tamat persekolahan.</div>
+                  <div className="progress"><span style={{ width: `${ppkiSummary.selected ? Math.round((ppkiSummary.completed / ppkiSummary.selected) * 100) : 0}%` }} /></div>
+                  <div className="class-stats">
+                    <span><b>{ppkiSummary.selected}</b> dipilih</span>
+                    <span><b>{ppkiSummary.completed}</b> selesai</span>
+                    <span><b>{ppkiSummary.total}</b> semua PPKI</span>
+                  </div>
+                  {ppkiSummary.selected > 0 && <div className="ppki-card-note">No. siri PPKI bermula 080 mengikut nama A–Z murid yang dipilih.</div>}
+                </button>
+              </div>
+            )}
+          </section>
+        ) : isPPKI && ppkiSelecting ? (
+          <section>
+            <div className="class-header">
+              <button className="ghost-btn" onClick={backDashboard}><ArrowLeft size={18} /> Kembali</button>
+              <div className="class-header-title">
+                <h2>Pilih Murid PPKI Yang Akan Tamat</h2>
+                <p>Semua murid PPKI aktif disenaraikan. Tandakan hanya murid yang perlu sijil.</p>
+              </div>
+              <button className="primary-btn" onClick={savePPKISelection} disabled={saving}>
+                {saving ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
+                Simpan Pilihan ({ppkiSelectedIds.size})
+              </button>
+            </div>
+
+            {loading ? <div className="center-loader"><Loader2 className="spin" /> Memuatkan murid PPKI...</div> : (
+              <div className="ppki-selection-panel">
+                <div className="ppki-selection-toolbar">
+                  <div className="search-box ppki-search"><Search size={17} /><input value={ppkiSearch} onChange={(e) => setPpkiSearch(e.target.value)} placeholder="Cari nama / kelas PPKI..." /></div>
+                  <div className="ppki-selected-count"><strong>{ppkiSelectedIds.size}</strong> dipilih daripada {ppkiCandidates.length}</div>
+                  {ppkiSummary.selected > 0 && <button className="secondary-btn" onClick={openPPKIWorkspace}>Buka Sijil Yang Dipilih</button>}
+                </div>
+
+                <div className="ppki-selection-list">
+                  {filteredPpkiCandidates.map((student) => (
+                    <label className={`ppki-select-row ${ppkiSelectedIds.has(student.student_id) ? 'selected' : ''}`} key={student.student_id}>
+                      <input type="checkbox" checked={ppkiSelectedIds.has(student.student_id)} onChange={() => togglePpkiStudent(student.student_id)} />
+                      <div className="ppki-select-main">
+                        <strong>{student.full_name}</strong>
+                        <span>{student.class_name}</span>
+                      </div>
+                      <div className="ppki-select-status">
+                        {student.selected && student.serial_no ? <span>No. siri semasa: {String(student.serial_no).padStart(3, '0')}</span> : <span>Belum dipilih</span>}
+                      </div>
+                    </label>
+                  ))}
+                  {!filteredPpkiCandidates.length && <div className="empty-state">Tiada murid sepadan.</div>}
+                </div>
               </div>
             )}
           </section>
         ) : (
           <section>
             <div className="class-header">
-              <button className="ghost-btn" onClick={() => { setSelectedClass(null); setStudents([]); setSelectedId(null); loadDashboard(); }}>
-                <ArrowLeft size={18} /> Kembali
-              </button>
+              <button className="ghost-btn" onClick={backDashboard}><ArrowLeft size={18} /> Kembali</button>
               <div className="class-header-title">
                 <h2>{selectedClass.name}</h2>
-                <p>{selectedClass.class_teacher_name || 'Guru kelas belum ditetapkan'}</p>
+                <p>{isPPKI ? `${students.length} murid PPKI dipilih untuk sijil` : (selectedClass.class_teacher_name || 'Guru kelas belum ditetapkan')}</p>
               </div>
-              <button className="primary-btn" onClick={downloadClass} disabled={pdfBusy || students.some((s) => s.status !== 'SELESAI')}>
+              {isPPKI && <button className="secondary-btn" onClick={openPPKISelection}>Ubah Pilihan PPKI</button>}
+              <button className="primary-btn" onClick={downloadClass} disabled={pdfBusy || !students.length || students.some((s) => s.status !== 'SELESAI')}>
                 {pdfBusy ? <Loader2 className="spin" size={18} /> : <Download size={18} />}
-                PDF Semua Kelas
+                {isPPKI ? 'PDF Semua PPKI Dipilih' : 'PDF Semua Kelas'}
               </button>
             </div>
 
-            {loading ? <div className="center-loader"><Loader2 className="spin" /> Memuatkan murid...</div> : (
+            {loading ? <div className="center-loader"><Loader2 className="spin" /> Memuatkan murid...</div> : !students.length ? (
+              <div className="empty-card">
+                <Users size={40} />
+                <h3>Belum ada murid PPKI dipilih.</h3>
+                <p>Pilih murid PPKI yang akan tamat dahulu.</p>
+                <button className="primary-btn" onClick={openPPKISelection}>Pilih Murid PPKI</button>
+              </div>
+            ) : (
               <div className="workspace">
                 <aside className="student-list-panel">
                   <div className="search-box"><Search size={17} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama murid..." /></div>
@@ -396,7 +556,7 @@ function App() {
                         <div className="serial-mini">{String(student.serial_no || 0).padStart(3, '0')}</div>
                         <div className="student-row-main">
                           <strong>{student.full_name}</strong>
-                          <span>{student.status === 'SELESAI' ? 'Selesai' : 'Belum lengkap'}</span>
+                          <span>{isPPKI && student.class_name ? `${student.class_name} · ` : ''}{student.status === 'SELESAI' ? 'Selesai' : 'Belum lengkap'}</span>
                         </div>
                         {student.status === 'SELESAI' ? <CheckCircle2 className="ok-icon" size={18} /> : <TriangleAlert className="warn-icon" size={18} />}
                       </button>
@@ -411,6 +571,7 @@ function App() {
                         <div>
                           <div className="serial-label">NO. SIRI</div>
                           <div className="serial-value">{settings?.serial_prefix || 'jba5095'}/{YEAR}/{String(selectedStudent.serial_no || 0).padStart(3, '0')}</div>
+                          {isPPKI && selectedStudent.class_name && <div className="student-class-tag">{selectedStudent.class_name}</div>}
                         </div>
                         <StatusPill complete={selectedStudent.status === 'SELESAI'} />
                       </div>
