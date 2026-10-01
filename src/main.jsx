@@ -16,7 +16,7 @@ import {
   TriangleAlert,
   Users,
 } from 'lucide-react';
-import { api } from './api';
+import { api, login } from './api';
 import { downloadBytes, makeClassPdf, makeStudentPdf, previewBytes } from './pdf';
 import './styles.css';
 
@@ -36,7 +36,7 @@ function displayDate(value) {
 }
 
 function Login({ onLogin, busy, error }) {
-  const [password, setPassword] = useState('');
+  const [ic, setIc] = useState('');
   return (
     <main className="login-shell">
       <section className="login-card">
@@ -44,22 +44,25 @@ function Login({ onLogin, busy, error }) {
         <div className="login-icon"><LockKeyhole size={30} /></div>
         <h1>Sistem Sijil Tamat Persekolahan</h1>
         <p>SK Sungai Abong · Tahun 6 · {YEAR}</p>
-        <form onSubmit={(e) => { e.preventDefault(); onLogin(password); }}>
-          <label>Kata laluan sistem</label>
+        <form onSubmit={(e) => { e.preventDefault(); onLogin(ic); }}>
+          <label>No. Kad Pengenalan</label>
           <input
             type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Masukkan kata laluan"
+            inputMode="numeric"
+            autoComplete="off"
+            maxLength={12}
+            value={ic}
+            onChange={(e) => setIc(e.target.value.replace(/\D/g, '').slice(0, 12))}
+            placeholder="Contoh: 850101011234"
             autoFocus
           />
           {error && <div className="error-box">{error}</div>}
-          <button className="primary-btn full" disabled={!password || busy}>
+          <button className="primary-btn full" disabled={ic.length !== 12 || busy}>
             {busy ? <Loader2 className="spin" size={18} /> : <ShieldCheck size={18} />}
-            Masuk
+            Log Masuk
           </button>
         </form>
-        <small>Akses dilindungi menggunakan kata laluan sistem Supabase sedia ada.</small>
+        <small>Masukkan nombor kad pengenalan 12 digit. Hanya pengguna yang dibenarkan boleh masuk.</small>
       </section>
     </main>
   );
@@ -74,7 +77,10 @@ function StatusPill({ complete }) {
 }
 
 function App() {
-  const [password, setPassword] = useState(() => sessionStorage.getItem('sijil-password') || '');
+  const [token, setToken] = useState(() => sessionStorage.getItem('sijil-token') || '');
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('sijil-user') || 'null'); } catch { return null; }
+  });
   const [authorized, setAuthorized] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginError, setLoginError] = useState('');
@@ -100,24 +106,51 @@ function App() {
     );
   }, [students, search]);
 
-  async function authenticate(value) {
+  function clearSession() {
+    sessionStorage.removeItem('sijil-token');
+    sessionStorage.removeItem('sijil-user');
+    setToken('');
+    setUser(null);
+    setAuthorized(false);
+  }
+
+  async function authenticate(ic) {
     setLoginBusy(true);
     setLoginError('');
     try {
-      await api(value, 'auth');
-      sessionStorage.setItem('sijil-password', value);
-      setPassword(value);
+      const result = await login(ic);
+      sessionStorage.setItem('sijil-token', result.token);
+      sessionStorage.setItem('sijil-user', JSON.stringify(result.user));
+      setToken(result.token);
+      setUser(result.user);
       setAuthorized(true);
     } catch (err) {
-      setLoginError(err.message === 'PASSWORD_TIDAK_SAH' ? 'Kata laluan tidak sah.' : err.message);
-      setAuthorized(false);
+      const code = err.code || err.message;
+      const friendly = code === 'IC_TIDAK_DIBENARKAN'
+        ? 'No. kad pengenalan ini tidak dibenarkan masuk.'
+        : code === 'IC_TIDAK_SAH'
+          ? 'Masukkan no. kad pengenalan 12 digit yang sah.'
+          : err.message;
+      setLoginError(friendly);
+      clearSession();
     } finally {
       setLoginBusy(false);
     }
   }
 
+  async function restoreSession(value) {
+    try {
+      const result = await api(value, 'auth');
+      setUser(result.user);
+      sessionStorage.setItem('sijil-user', JSON.stringify(result.user));
+      setAuthorized(true);
+    } catch {
+      clearSession();
+    }
+  }
+
   useEffect(() => {
-    if (password) authenticate(password);
+    if (token) restoreSession(token);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -140,8 +173,8 @@ function App() {
     setMessage('');
     try {
       const [configRes, classRes] = await Promise.all([
-        api(password, 'getConfig'),
-        api(password, 'getClasses'),
+        api(token, 'getConfig'),
+        api(token, 'getClasses'),
       ]);
       setSettings(configRes.settings);
       setClasses(classRes.classes || []);
@@ -160,7 +193,7 @@ function App() {
     setLoading(true);
     setMessage('');
     try {
-      const result = await api(password, 'getStudentsByClass', { classId: cls.id });
+      const result = await api(token, 'getStudentsByClass', { classId: cls.id });
       setStudents(result.students || []);
       if (result.students?.length) setSelectedId(result.students[0].student_id);
     } catch (err) {
@@ -175,7 +208,7 @@ function App() {
     setSaving(true);
     setMessage('');
     try {
-      const result = await api(password, 'saveStudent', {
+      const result = await api(token, 'saveStudent', {
         studentId: selectedStudent.student_id,
         birthCertificateNo: form.birth_certificate_no,
         leadership: form.leadership,
@@ -183,8 +216,8 @@ function App() {
       if (result.student) {
         setStudents((prev) => prev.map((s) => s.student_id === result.student.student_id ? result.student : s));
       }
-      setMessage('Maklumat berjaya disimpan.');
-      const classRes = await api(password, 'getClasses');
+      setMessage(`Maklumat berjaya disimpan oleh ${result.savedBy || user?.full_name || 'pengguna'}.`);
+      const classRes = await api(token, 'getClasses');
       setClasses(classRes.classes || []);
     } catch (err) {
       setMessage(err.message);
@@ -248,15 +281,19 @@ function App() {
     }
   }
 
-  function logout() {
-    sessionStorage.removeItem('sijil-password');
-    setPassword('');
-    setAuthorized(false);
+  async function logout() {
+    try {
+      if (token) await api(token, 'logout');
+    } catch {
+      // Sesi mungkin sudah tamat; tetap bersihkan sesi tempatan.
+    }
+    clearSession();
     setSettings(null);
     setClasses([]);
     setSelectedClass(null);
     setStudents([]);
   }
+
 
   if (!authorized) return <Login onLogin={authenticate} busy={loginBusy} error={loginError} />;
 
@@ -269,6 +306,7 @@ function App() {
           <p>Tahun 6 · Sesi {YEAR}</p>
         </div>
         <div className="top-actions">
+          <div className="user-chip"><span>Log masuk</span><strong>{user?.full_name || '-'}</strong></div>
           <button className="ghost-btn" onClick={loadDashboard}><RefreshCw size={17} /> Segar semula</button>
           <button className="ghost-btn" onClick={logout}><LogOut size={17} /> Keluar</button>
         </div>
@@ -377,6 +415,13 @@ function App() {
 
                       {(!selectedStudent.koku?.club || !selectedStudent.koku?.sport || !selectedStudent.koku?.uniform) && (
                         <div className="warning-box"><TriangleAlert size={18} /> Data KOKU murid ini belum lengkap dalam Portal KOKU. Betulkan data di portal supaya sijil tidak tersalah.</div>
+                      )}
+
+                      {selectedStudent.last_updated_by_name && (
+                        <div className="audit-note">
+                          Kemaskini terakhir oleh <strong>{selectedStudent.last_updated_by_name}</strong>
+                          {selectedStudent.updated_at ? <> · {new Date(selectedStudent.updated_at).toLocaleString('ms-MY')}</> : null}
+                        </div>
                       )}
 
                       <div className="form-actions">

@@ -114,3 +114,8 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .form-actions, .top-actions { flex-direction: column; align-items: stretch; width: 100%; }
   .form-actions button, .top-actions button { width: 100%; }
 }
+.user-chip { min-height: 40px; padding: 7px 11px; border: 1px solid #dbe3ee; border-radius: 10px; background: #f8fafc; display: flex; flex-direction: column; justify-content: center; max-width: 260px; }
+.user-chip span { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; font-weight: 850; }
+.user-chip strong { font-size: 11px; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.audit-note { margin-top: 14px; padding: 10px 12px; border: 1px solid #dbeafe; background: #eff6ff; color: #1e3a8a; border-radius: 10px; font-size: 12px; }
+@media (max-width: 640px) { .user-chip { max-width: none; width: 100%; } }

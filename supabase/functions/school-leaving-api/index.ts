@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization,x-client-info,apikey,content-type,x-app-password',
+  'Access-Control-Allow-Headers': 'authorization,x-client-info,apikey,content-type,x-session-token',
   'Access-Control-Allow-Methods': 'POST,OPTIONS',
 };
 
@@ -15,8 +15,89 @@ const json = (body: unknown, status = 200) =>
 const str = (value: unknown) => String(value ?? '').trim();
 const YEAR = 2026;
 const YEAR_LEVEL = 6;
+const SESSION_HOURS = 12;
 
 type DB = ReturnType<typeof createClient>;
+type AppUser = { id: string; full_name: string; role: string };
+type AppSession = { id: string; user_id: string; expires_at: string };
+
+async function sha256Hex(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function randomToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function loginWithIc(db: DB, icValue: unknown) {
+  const ic = str(icValue).replace(/\D/g, '');
+  if (!/^\d{12}$/.test(ic)) {
+    return { ok: false as const, error: 'IC_TIDAK_SAH' };
+  }
+
+  const icHash = await sha256Hex(ic);
+  const { data: user, error } = await db
+    .from('school_leaving_users')
+    .select('id,full_name,role,active')
+    .eq('ic_hash', icHash)
+    .eq('active', true)
+    .maybeSingle();
+  if (error) throw error;
+  if (!user) return { ok: false as const, error: 'IC_TIDAK_DIBENARKAN' };
+
+  const token = randomToken();
+  const tokenHash = await sha256Hex(token);
+  const expiresAt = new Date(Date.now() + SESSION_HOURS * 60 * 60 * 1000).toISOString();
+  const { error: se } = await db.from('school_leaving_sessions').insert({
+    user_id: user.id,
+    token_hash: tokenHash,
+    expires_at: expiresAt,
+  });
+  if (se) throw se;
+
+  return {
+    ok: true as const,
+    token,
+    expiresAt,
+    user: { id: user.id, full_name: user.full_name, role: user.role },
+  };
+}
+
+async function requireSession(db: DB, req: Request) {
+  const token = str(req.headers.get('x-session-token'));
+  if (!token) return { ok: false as const, error: 'SESI_DIPERLUKAN' };
+
+  const tokenHash = await sha256Hex(token);
+  const { data: session, error: se } = await db
+    .from('school_leaving_sessions')
+    .select('id,user_id,expires_at')
+    .eq('token_hash', tokenHash)
+    .maybeSingle();
+  if (se) throw se;
+  if (!session) return { ok: false as const, error: 'SESI_TIDAK_SAH' };
+  if (new Date(session.expires_at).getTime() <= Date.now()) {
+    return { ok: false as const, error: 'SESI_TAMAT' };
+  }
+
+  const { data: user, error: ue } = await db
+    .from('school_leaving_users')
+    .select('id,full_name,role,active')
+    .eq('id', session.user_id)
+    .eq('active', true)
+    .maybeSingle();
+  if (ue) throw ue;
+  if (!user) return { ok: false as const, error: 'PENGGUNA_TIDAK_AKTIF' };
+
+  return {
+    ok: true as const,
+    session: session as AppSession,
+    user: { id: user.id, full_name: user.full_name, role: user.role } as AppUser,
+  };
+}
 
 async function getSession(db: DB, year: number) {
   const { data, error } = await db
@@ -138,7 +219,7 @@ async function buildStudentsForClass(db: DB, year: number, classId: string) {
     db.from('student_master_profiles').select('student_id,school_entry_date').in('student_id', ids),
     db
       .from('school_leaving_certificates')
-      .select('student_id,session_year,serial_no,birth_certificate_no,leadership,conduct,status,updated_at')
+      .select('student_id,session_year,serial_no,birth_certificate_no,leadership,conduct,status,updated_at,last_updated_by_name')
       .eq('session_year', year)
       .in('student_id', ids),
   ]);
@@ -169,6 +250,7 @@ async function buildStudentsForClass(db: DB, year: number, classId: string) {
         conduct: c.conduct || 'BAIK',
         stored_status: c.status || 'DRAF',
         updated_at: c.updated_at || null,
+        last_updated_by_name: c.last_updated_by_name || '',
         koku: {
           club: koku.club || '',
           sport: koku.sport || '',
@@ -186,16 +268,11 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ success: false, error: 'Method not allowed' }, 405);
 
-  const appPassword = req.headers.get('x-app-password') || '';
   const url = Deno.env.get('SUPABASE_URL');
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!url || !key) return json({ success: false, error: 'Konfigurasi Supabase belum lengkap.' }, 500);
 
   const db = createClient(url, key, { auth: { persistSession: false } });
-  const { data: authorized, error: authError } = await db.rpc('segak_bridge_authorized', {
-    p_bridge_token: appPassword,
-  });
-  if (authError || authorized !== true) return json({ success: false, error: 'PASSWORD_TIDAK_SAH' }, 401);
 
   try {
     const body = await req.json().catch(() => ({}));
@@ -203,7 +280,23 @@ Deno.serve(async (req: Request) => {
     const year = Number(body.year || YEAR);
     if (!Number.isFinite(year)) return json({ success: false, error: 'Tahun tidak sah.' }, 400);
 
-    if (action === 'auth') return json({ success: true });
+    if (action === 'login') {
+      const result = await loginWithIc(db, body.ic);
+      if (!result.ok) return json({ success: false, error: result.error }, 401);
+      return json({ success: true, token: result.token, expiresAt: result.expiresAt, user: result.user });
+    }
+
+    const auth = await requireSession(db, req);
+    if (!auth.ok) return json({ success: false, error: auth.error }, 401);
+    const { user, session } = auth;
+
+    if (action === 'auth') return json({ success: true, user });
+
+    if (action === 'logout') {
+      const { error } = await db.from('school_leaving_sessions').delete().eq('id', session.id);
+      if (error) throw error;
+      return json({ success: true });
+    }
 
     if (action === 'getConfig') {
       const { data: settings, error } = await db
@@ -212,11 +305,11 @@ Deno.serve(async (req: Request) => {
         .eq('session_year', year)
         .maybeSingle();
       if (error) throw error;
-      return json({ success: true, settings });
+      return json({ success: true, settings, user });
     }
 
     if (action === 'getClasses') {
-      const { session, classes, enrolments } = await getYear6Context(db, year);
+      const { session: academicSession, classes, enrolments } = await getYear6Context(db, year);
       const ids = enrolments.map((e: any) => e.student_id);
       if (!ids.length) return json({ success: true, classes: [] });
 
@@ -231,7 +324,7 @@ Deno.serve(async (req: Request) => {
         db
           .from('student_unit_memberships')
           .select('student_id,category')
-          .eq('session_id', session.id)
+          .eq('session_id', academicSession.id)
           .eq('is_current', true)
           .in('student_id', ids),
       ]);
@@ -249,7 +342,6 @@ Deno.serve(async (req: Request) => {
         categoryMap.get(m.student_id)!.add(str(m.category));
       }
 
-      const classById = new Map(classes.map((c: any) => [c.id, c]));
       const groups = new Map<string, string[]>();
       for (const e of enrolments) {
         if (!groups.has(e.class_id)) groups.set(e.class_id, []);
@@ -303,7 +395,7 @@ Deno.serve(async (req: Request) => {
 
       const { data: existing, error: findError } = await db
         .from('school_leaving_certificates')
-        .select('id,serial_no')
+        .select('id,serial_no,birth_certificate_no,leadership,status,last_updated_by_name')
         .eq('student_id', studentId)
         .eq('session_year', year)
         .maybeSingle();
@@ -312,11 +404,17 @@ Deno.serve(async (req: Request) => {
 
       const { error: updateError } = await db
         .from('school_leaving_certificates')
-        .update({ birth_certificate_no: birthCertificateNo, leadership, conduct: 'BAIK' })
+        .update({
+          birth_certificate_no: birthCertificateNo,
+          leadership,
+          conduct: 'BAIK',
+          last_updated_by: user.id,
+          last_updated_by_name: user.full_name,
+        })
         .eq('id', existing.id);
       if (updateError) throw updateError;
 
-      const { session, classes, enrolments } = await getYear6Context(db, year);
+      const { enrolments } = await getYear6Context(db, year);
       const classId = enrolments.find((e: any) => e.student_id === studentId)?.class_id;
       if (!classId) return json({ success: false, error: 'Murid bukan dalam kelas Tahun 6 semasa.' }, 400);
 
@@ -325,11 +423,28 @@ Deno.serve(async (req: Request) => {
       const status = row?.status || 'DRAF';
       const { error: statusError } = await db
         .from('school_leaving_certificates')
-        .update({ status })
+        .update({ status, last_updated_by: user.id, last_updated_by_name: user.full_name })
         .eq('id', existing.id);
       if (statusError) throw statusError;
 
-      return json({ success: true, student: row ? { ...row, status } : null });
+      const changes = {
+        birth_certificate_no: { before: existing.birth_certificate_no || '', after: birthCertificateNo || '' },
+        leadership: { before: existing.leadership || '', after: leadership || '' },
+        status: { before: existing.status || 'DRAF', after: status },
+      };
+      const { error: auditError } = await db.from('school_leaving_audit_log').insert({
+        user_id: user.id,
+        user_name: user.full_name,
+        student_id: studentId,
+        session_year: year,
+        action: 'SAVE_STUDENT',
+        changes,
+      });
+      if (auditError) throw auditError;
+
+      const refreshed = await buildStudentsForClass(db, year, classId);
+      const refreshedRow = refreshed.students.find((s: any) => s.student_id === studentId);
+      return json({ success: true, student: refreshedRow || null, savedBy: user.full_name });
     }
 
     return json({ success: false, error: `Action tidak dikenali: ${action}` }, 400);
