@@ -24,6 +24,11 @@ function normalizeAjkLabel(value) {
   return String(value || '').replace(/^AJK\s+\d+\b/i, 'AJK').replace(/\s+/g, ' ').trim();
 }
 
+function leadershipForPdf(value) {
+  const normalized = String(value || '').trim();
+  return normalized.toUpperCase() === 'MURID BIASA' ? '' : normalized;
+}
+
 function fitText(font, text, maxWidth, preferred = 12, min = 8.5) {
   let size = preferred;
   const value = String(text || '');
@@ -69,7 +74,7 @@ async function stampStudent(pdfDoc, templateDoc, templatePageIndex, student, set
   drawText(page, bold, dateMY(settings?.leaving_date || '2026-12-31'), VALUE_X, 393.73, { maxWidth: 150 });
   drawText(page, bold, 'BAIK', VALUE_X, 421.33, { maxWidth: 100 });
 
-  drawText(page, bold, student.leadership, TABLE_VALUE_X, 482.52, { maxWidth: 371, minSize: 8 });
+  drawText(page, bold, leadershipForPdf(student.leadership), TABLE_VALUE_X, 482.52, { maxWidth: 371, minSize: 8 });
   drawText(page, bold, normalizeAjkLabel(student.koku?.club), TABLE_VALUE_X, 507.57, { maxWidth: 371, minSize: 8 });
   drawText(page, bold, normalizeAjkLabel(student.koku?.sport), TABLE_VALUE_X, 532.62, { maxWidth: 371, minSize: 8 });
   drawText(page, bold, normalizeAjkLabel(student.koku?.uniform), TABLE_VALUE_X, 557.67, { maxWidth: 371, minSize: 8 });

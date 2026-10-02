@@ -22,6 +22,7 @@ import './styles.css';
 const YEAR = 2026;
 
 const LEADERSHIP_OPTIONS = [
+  ['MURID BIASA', 'Murid Biasa'],
   ['KETUA KELAS', 'Ketua Kelas'],
   ['KETUA PENGAWAS SEKOLAH', 'Ketua Pengawas Sekolah'],
   ['KETUA PENGAWAS ICT', 'Ketua Pengawas ICT'],
